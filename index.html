@@ -1,3 +1,6 @@
+Montando o código completo aqui no chat.
+
+```html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -20,6 +23,10 @@
   #msg{min-height:1.2em;color:#ffb454;font-size:14px}
   #rotate{position:fixed;inset:0;z-index:9;display:none;align-items:center;justify-content:center;background:#07080e;color:#eceffd;font-size:20px;text-align:center;padding:30px}
   @media (orientation:portrait){body.run #rotate{display:flex}}
+  #fs{position:fixed;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));z-index:20;width:44px;height:44px;padding:0;border:0;border-radius:50%;
+    background:rgba(255,255,255,.14);color:#eceffd;font-size:22px;line-height:44px;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #fs:active{background:rgba(255,255,255,.28)}
+  body.run.isfs #fs,body.run #fs.nofs{display:none}
 </style>
 </head>
 <body>
@@ -31,6 +38,7 @@
   <div id="msg"></div>
 </div>
 <div id="rotate">Gire o celular para a horizontal</div>
+<button id="fs" aria-label="Tela cheia" title="Tela cheia">⛶</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
@@ -742,12 +750,25 @@ $('#go').addEventListener('click',async()=>{
       if(r!=='granted')msg.textContent='Sem acesso ao giroscópio: arraste na tela para olhar ao redor.';
     }
   }catch(e){}
-  try{if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen({navigationUI:'hide'});}catch(e){}
+  await enterFs();
   try{if(screen.orientation&&screen.orientation.lock)await screen.orientation.lock('landscape');}catch(e){}
   try{if(navigator.wakeLock)await navigator.wakeLock.request('screen');}catch(e){}
   $('#intro').style.display='none';
   start();
 });
+/* ───────── Tela cheia ───────── */
+const fsBtn=$('#fs'),fsRoot=document.documentElement;
+const fsReq=fsRoot.requestFullscreen||fsRoot.webkitRequestFullscreen;
+const fsExit=document.exitFullscreen||document.webkitExitFullscreen;
+const inFs=()=>!!(document.fullscreenElement||document.webkitFullscreenElement);
+async function enterFs(){try{if(fsReq)await fsReq.call(fsRoot,{navigationUI:'hide'});}catch(e){}}
+function syncFs(){document.body.classList.toggle('isfs',inFs());fsBtn.textContent=inFs()?'✕':'⛶';}
+if(!fsReq)fsBtn.classList.add('nofs');
+fsBtn.addEventListener('click',async()=>{
+  if(!fsReq){$('#msg').textContent='No iPhone: toque em Compartilhar › Adicionar à Tela de Início e abra pelo ícone para usar em tela cheia.';return;}
+  try{if(inFs())await fsExit.call(document);else await enterFs();}catch(e){}
+});
+['fullscreenchange','webkitfullscreenchange'].forEach(n=>document.addEventListener(n,syncFs));
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&running){try{if(navigator.wakeLock)navigator.wakeLock.request('screen');}catch(e){}}
 });
@@ -755,3 +776,4 @@ document.addEventListener('visibilitychange',()=>{
 </script>
 </body>
 </html>
+```
