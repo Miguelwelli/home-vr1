@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Painel AR com World-Locking</title>
+<!--
+  REQUISITOS (importante):
+  - Servir via HTTPS (ou localhost com `adb reverse`). WebXR não funciona em file://.
+  - Android + Chrome com ARCore (Google Play Services for AR). iOS Safari NÃO suporta immersive-ar.
+  - Em VR Box (estéreo de celular) o WebXR AR do Chrome renderiza em tela única (passthrough mono);
+    não existe modo estéreo split-screen no immersive-ar.
+  - 'anchors' é opcional: se indisponível, o painel fica travado no espaço de referência 'local'
+    (ainda world-locked, mas sem correção de deriva do ARCore).
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; }
+  #status {
+    position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+    transform: translateX(-50%); padding: 8px 14px; border-radius: 999px;
+    background: rgba(0,0,0,.6); color: #fff; font-size: 14px; white-space: nowrap;
+  }
+  #reset {
+    position: absolute; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 12px);
+    pointer-events: auto; padding: 10px 14px; border: 0; border-radius: 10px;
+    background: #2d6cff; color: #fff; font-size: 14px;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="overlay">
+  <div id="status">Abra no Chrome (Android) e toque em "START AR"</div>
+  <button id="reset" hidden>Reposicionar</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+/* ------------------------------------------------------------------ */
+/* Cena base                                                           */
+/* ------------------------------------------------------------------ */
+const overlay  = document.getElementById('overlay');
+const statusEl = document.getElementById('status');
+const resetBtn = document.getElementById('reset');
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+document.body.appendChild(ARButton.createButton(renderer, {
+  requiredFeatures: ['hit-test'],
+  optionalFeatures: ['anchors', 'dom-overlay'],
+  domOverlay: { root: overlay }
+}));
+
+/* ------------------------------------------------------------------ */
+/* Retículo                                                            */
+/* ------------------------------------------------------------------ */
+const reticle = new THREE.Mesh(
+  new THREE.RingGeometry(0.07, 0.09, 40).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0x4fd1ff, side: THREE.DoubleSide })
+);
+reticle.add(new THREE.Mesh(
+  new THREE.CircleGeometry(0.008, 16).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+));
+reticle.matrixAutoUpdate = false;
+reticle.visible = false;
+scene.add(reticle);
+
+/* ------------------------------------------------------------------ */
+/* Painel (canvas -> textura) com botões clicáveis                     */
+/* ------------------------------------------------------------------ */
+const CW = 1024, CH = 640;
+const PANEL_W = 0.5, PANEL_H = PANEL_W * CH / CW;
+
+const canvas = document.createElement('canvas');
+canvas.width = CW; canvas.height = CH;
+const ctx = canvas.getContext('2d');
+const texture = new THREE.CanvasTexture(canvas);
+texture.colorSpace = THREE.SRGBColorSpace;
+texture.anisotropy = 8;
+
+const buttons = [
+  { id: 'home',     label: 'Início',        x: 60,  y: 170, w: 280, h: 170, on: false },
+  { id: 'apps',     label: 'Apps',          x: 372, y: 170, w: 280, h: 170, on: false },
+  { id: 'settings', label: 'Ajustes',       x: 684, y: 170, w: 280, h: 170, on: false },
+  { id: 'toggle',   label: 'Modo escuro',   x: 60,  y: 380, w: 440, h: 170, on: true,  toggle: true },
+  { id: 'relocate', label: 'Reposicionar',  x: 524, y: 380, w: 440, h: 170, on: false }
+];
+let pressedId = null;
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+function drawPanel() {
+  ctx.clearRect(0, 0, CW, CH);
+  ctx.fillStyle = 'rgba(18,20,28,0.92)';
+  roundRect(ctx, 0, 0, CW, CH, 48); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 4; ctx.stroke();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '600 56px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Painel', 60, 88);
+
+  for (const b of buttons) {
+    const pressed = pressedId === b.id;
+    ctx.fillStyle = pressed ? '#2d6cff' : (b.toggle && b.on ? '#3a4260' : '#272c3d');
+    roundRect(ctx, b.x, b.y, b.w, b.h, 36); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '500 44px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2);
+    ctx.textAlign = 'left';
+  }
+  texture.needsUpdate = true;
+}
+drawPanel();
+
+const panel = new THREE.Mesh(
+  new THREE.PlaneGeometry(PANEL_W, PANEL_H),
+  new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+);
+panel.matrixAutoUpdate = false;
+panel.visible = false;
+scene.add(panel);
+
+/* ------------------------------------------------------------------ */
+/* Estado de ancoragem                                                 */
+/* ------------------------------------------------------------------ */
+let hitTestSource = null;
+let hitTestSourceRequested = false;
+let lastHitResult = null;            // XRHitTestResult do frame atual
+let lastHitMatrix = new THREE.Matrix4();
+let pendingPlace = false;            // seleção pedida; resolvida dentro do frame
+let anchor = null;                   // XRAnchor
+let placed = false;
+const panelLocal = new THREE.Matrix4();   // pose do painel relativa à âncora
+const anchorMatrix = new THREE.Matrix4(); // pose atual da âncora (ou fixa, se sem âncoras)
+const fixedMatrix = new THREE.Matrix4();  // fallback sem âncoras
+
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
+
+function setStatus(t) { statusEl.textContent = t; statusEl.style.display = t ? '' : 'none'; }
+
+/* Calcula a pose mundial desejada do painel a partir do hit (chão/mesa ou parede). */
+function computePanelWorldMatrix(hitMatrix, camPos) {
+  const pos = _v1.setFromMatrixPosition(hitMatrix);
+  const normal = _v2.set(0, 1, 0).transformDirection(hitMatrix).normalize(); // eixo Y = normal da superfície
+  const out = new THREE.Matrix4();
+  const up = new THREE.Vector3(0, 1, 0);
+
+  if (Math.abs(normal.y) > 0.7) {
+    // Superfície horizontal: painel em pé, de frente para o usuário (só yaw).
+    const lookAt = _v3.set(camPos.x, pos.y, camPos.z);
+    const center = pos.clone().addScaledVector(up, PANEL_H / 2 + 0.02);
+    lookAt.y = center.y;
+    _m.lookAt(lookAt, center, up);            // +Z do painel aponta para o usuário
+    out.makeRotationFromQuaternion(_q.setFromRotationMatrix(_m));
+    out.setPosition(center);
+  } else {
+    // Parede: painel colado na superfície, normal para fora.
+    if (normal.dot(_v3.copy(camPos).sub(pos)) < 0) normal.negate();
+    const center = pos.clone().addScaledVector(normal, 0.01);
+    _m.lookAt(center.clone().add(normal), center, up);
+    out.makeRotationFromQuaternion(_q.setFromRotationMatrix(_m));
+    out.setPosition(center);
+  }
+  return out;
+}
+
+async function placePanel(frame, refSpace) {
+  if (!lastHitResult) return;
+
+  const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+  const hitMatrix = lastHitMatrix.clone();
+  const desired = computePanelWorldMatrix(hitMatrix, camPos);
+
+  // Libera âncora anterior
+  if (anchor) { try { anchor.delete(); } catch (_) {} anchor = null; }
+
+  // Tenta criar âncora real no ponto do hit
+  try {
+    if (typeof lastHitResult.createAnchor === 'function') {
+      anchor = await lastHitResult.createAnchor();
+    } else if (frame.createAnchor) {
+      const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      hitMatrix.decompose(p, q, s);
+      anchor = await frame.createAnchor(
+        new XRRigidTransform({ x: p.x, y: p.y, z: p.z }, { x: q.x, y: q.y, z: q.z, w: q.w }),
+        refSpace
+      );
+    }
+  } catch (e) {
+    console.warn('Falha ao criar âncora, usando pose fixa:', e);
+    anchor = null;
+  }
+
+  fixedMatrix.copy(hitMatrix);
+  anchorMatrix.copy(hitMatrix);
+  panelLocal.copy(hitMatrix).invert().multiply(desired);
+
+  placed = true;
+  panel.visible = true;
+  reticle.visible = false;
+  resetBtn.hidden = false;
+  setStatus('');
+}
+
+function resetPlacement() {
+  if (anchor) { try { anchor.delete(); } catch (_) {} anchor = null; }
+  placed = false;
+  pendingPlace = false;
+  panel.visible = false;
+  resetBtn.hidden = true;
+  setStatus('Aponte para uma superfície e toque para posicionar');
+}
+resetBtn.addEventListener('click', (e) => { e.stopPropagation(); resetPlacement(); });
+resetBtn.addEventListener('beforexrselect', (e) => e.preventDefault());
+
+/* ------------------------------------------------------------------ */
+/* Seleção (toque na tela / gatilho)                                   */
+/* ------------------------------------------------------------------ */
+const controller = renderer.xr.getController(0);
+scene.add(controller);
+const raycaster = new THREE.Raycaster();
+
+controller.addEventListener('select', () => {
+  if (!placed) { pendingPlace = true; return; }
+
+  // Painel já posicionado: testa clique nos botões
+  _m.identity().extractRotation(controller.matrixWorld);
+  raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_m);
+  const hit = raycaster.intersectObject(panel, false)[0];
+  if (!hit || !hit.uv) return;
+
+  const cx = hit.uv.x * CW, cy = (1 - hit.uv.y) * CH;
+  const b = buttons.find(b => cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h);
+  if (!b) return;
+
+  if (b.id === 'relocate') { resetPlacement(); return; }
+  if (b.toggle) b.on = !b.on;
+  pressedId = b.id; drawPanel();
+  setTimeout(() => { pressedId = null; drawPanel(); }, 150);
+  console.log('Botão acionado:', b.id);
+});
+
+/* ------------------------------------------------------------------ */
+/* Sessão                                                              */
+/* ------------------------------------------------------------------ */
+renderer.xr.addEventListener('sessionstart', () => {
+  setStatus('Aponte para uma superfície e toque para posicionar');
+});
+
+renderer.xr.addEventListener('sessionend', () => {
+  hitTestSource = null;
+  hitTestSourceRequested = false;
+  lastHitResult = null;
+  if (anchor) { try { anchor.delete(); } catch (_) {} anchor = null; }
+  placed = false; pendingPlace = false;
+  panel.visible = false; reticle.visible = false;
+  resetBtn.hidden = true;
+  setStatus('Sessão encerrada');
+});
+
+/* ------------------------------------------------------------------ */
+/* Loop de render                                                      */
+/* ------------------------------------------------------------------ */
+renderer.setAnimationLoop((timestamp, frame) => {
+  if (frame) {
+    const refSpace = renderer.xr.getReferenceSpace();
+    const session  = renderer.xr.getSession();
+
+    if (!hitTestSourceRequested) {
+      hitTestSourceRequested = true;
+      session.requestReferenceSpace('viewer')
+        .then(viewerSpace => session.requestHitTestSource({ space: viewerSpace }))
+        .then(src => { hitTestSource = src; })
+        .catch(err => { console.error(err); setStatus('Hit-test indisponível neste dispositivo'); });
+    }
+
+    // Hit-test contínuo (apenas enquanto não posicionado)
+    if (hitTestSource && !placed) {
+      const results = frame.getHitTestResults(hitTestSource);
+      if (results.length) {
+        lastHitResult = results[0];
+        const pose = lastHitResult.getPose(refSpace);
+        if (pose) {
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+          lastHitMatrix.fromArray(pose.transform.matrix);
+        }
+      } else {
+        lastHitResult = null;
+        reticle.visible = false;
+      }
+    }
+
+    // Resolve o pedido de posicionamento dentro de um frame ativo
+    if (pendingPlace) {
+      pendingPlace = false;
+      if (lastHitResult) placePanel(frame, refSpace);
+    }
+
+    // World-locking: atualiza a pose a partir da âncora a cada frame
+    if (placed) {
+      if (anchor) {
+        if (frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
+          const aPose = frame.getPose(anchor.anchorSpace, refSpace);
+          if (aPose) anchorMatrix.fromArray(aPose.transform.matrix);
+        } else if (frame.trackedAnchors) {
+          anchor = null;               // âncora perdida: mantém a última pose conhecida
+          fixedMatrix.copy(anchorMatrix);
+        }
+      } else {
+        anchorMatrix.copy(fixedMatrix);
+      }
+      panel.matrix.copy(anchorMatrix).multiply(panelLocal);
+      panel.matrixWorldNeedsUpdate = true;
+    }
+  }
+
+  renderer.render(scene, camera);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
