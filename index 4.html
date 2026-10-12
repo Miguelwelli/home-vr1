@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Home VR</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;color:#fff;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+  #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:linear-gradient(#26313b,#0d1217)}
+  #css{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+
+  #start{position:fixed;inset:0;z-index:30;background:radial-gradient(circle at 50% 28%,#26384d,#080b10);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:32px}
+  #start h1{margin:0;font-size:32px;font-weight:700}
+  #start p{margin:0;max-width:320px;opacity:.7;line-height:1.45;font-size:15px}
+  #start button{background:#fff;color:#111;border:0;border-radius:999px;padding:16px 42px;font-size:18px;font-weight:700}
+  #err{color:#ff8a8a;font-size:14px;min-height:18px}
+  #tip{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 14px);text-align:center;font-size:14px;text-shadow:0 1px 6px #000;pointer-events:none;opacity:0;transition:opacity .5s;z-index:10}
+
+  /* ====================== JANELA BIBLIOTECA ====================== */
+  #lib{width:1000px;height:640px;border-radius:30px;background:rgba(36,43,49,.95);border:1px solid rgba(255,255,255,.1);box-shadow:0 30px 80px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden;pointer-events:auto;color:#fff;font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+  #lib .titlebar{height:54px;flex:none;display:flex;align-items:center;justify-content:center;position:relative;font-size:15px;opacity:.95}
+  #lib .titlebar span.t{opacity:.7}
+  #lib .wc{position:absolute;right:22px;top:0;height:54px;display:flex;align-items:center;gap:6px}
+  #lib .wc b{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:400;cursor:pointer;opacity:.85}
+  #lib .wc b:active{background:rgba(255,255,255,.16)}
+  #lib .body{flex:1;display:flex;min-height:0;padding:0 26px 26px 26px;gap:26px}
+  #lib .side{width:230px;flex:none;display:flex;flex-direction:column;gap:6px;padding-top:6px}
+  #lib .nav{display:flex;align-items:center;gap:14px;height:52px;padding:0 16px;border-radius:14px;font-size:17px;cursor:pointer;color:rgba(255,255,255,.92)}
+  #lib .nav.on{background:rgba(255,255,255,.13)}
+  #lib .nav:active{background:rgba(255,255,255,.18)}
+  #lib .nav .ni{width:22px;text-align:center;font-size:19px}
+  #lib .nav input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:#fff;font-size:17px;font-family:inherit}
+  #lib .nav input::placeholder{color:rgba(255,255,255,.6)}
+  #lib .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  #lib .head{height:56px;flex:none;display:flex;align-items:center;justify-content:space-between}
+  #lib .head h2{margin:0;font-size:24px;font-weight:600}
+  #lib .filters{display:flex;gap:12px}
+  #lib .dd{height:42px;padding:0 18px;border-radius:12px;background:rgba(255,255,255,.12);display:flex;align-items:center;gap:10px;font-size:16px;cursor:pointer}
+  #lib .dd:active{background:rgba(255,255,255,.2)}
+  #lib .dd i{font-style:normal;font-size:11px;opacity:.8}
+  #lib .grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:22px 18px;align-content:start;padding:6px 4px 10px 0;touch-action:pan-y;scrollbar-width:none}
+  #lib .grid::-webkit-scrollbar{display:none}
+  #lib .app{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer}
+  #lib .app .tile{width:100%;height:122px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:54px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),0 8px 18px rgba(0,0,0,.28);transition:transform .12s,filter .12s;position:relative;overflow:hidden}
+  #lib .app .tile::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,0) 55%)}
+  #lib .app:active .tile{transform:scale(.95);filter:brightness(1.15)}
+  #lib .app .lb{font-size:15px;color:rgba(255,255,255,.9);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  #lib .empty{grid-column:1/-1;text-align:center;opacity:.6;padding-top:60px;font-size:18px}
+
+  /* ====================== DOCK ====================== */
+  #dock{width:640px;height:118px;position:relative;pointer-events:auto;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff}
+  #dock .bar{position:absolute;left:0;right:0;top:24px;height:68px;border-radius:999px;background:rgba(32,38,44,.96);border:1px solid rgba(255,255,255,.1);box-shadow:0 18px 40px rgba(0,0,0,.5);display:flex;align-items:center;gap:10px;padding:0 14px}
+  #dock .av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#f5a65b,#d9576b);display:flex;align-items:center;justify-content:center;font-size:20px;flex:none}
+  #dock .pill{height:38px;border-radius:999px;background:rgba(255,255,255,.1);display:flex;align-items:center;gap:9px;padding:0 14px;font-size:15px;flex:none}
+  #dock .rb{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;flex:none}
+  #dock .rb:active,#dock .sc:active{filter:brightness(1.3);transform:scale(.92)}
+  #dock .sp{flex:1}
+  #dock .sc{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
+  #dock .sep{width:1px;height:30px;background:rgba(255,255,255,.2);flex:none;margin:0 2px}
+  #dock .gb{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;flex:none}
+  #dock .gb.on{background:#fff;color:#111}
+  #dock .handle{position:absolute;left:50%;top:100px;width:130px;height:30px;margin-left:-65px;display:flex;align-items:flex-start;justify-content:center;cursor:pointer}
+  #dock .handle i{display:block;width:84px;height:5px;border-radius:3px;background:rgba(255,255,255,.75);margin-top:2px}
+  #dock .toast{position:absolute;left:50%;top:-22px;transform:translateX(-50%);padding:10px 22px;border-radius:999px;background:rgba(255,255,255,.95);color:#111;font-size:16px;font-weight:600;opacity:0;transition:opacity .25s;white-space:nowrap;pointer-events:none}
+  #dock .toast.show{opacity:1}
+</style>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+
+<video id="video" playsinline muted autoplay></video>
+<div id="css"></div>
+<div id="tip">Toque na barrinha abaixo do dock para recentralizar</div>
+
+<div id="start">
+  <h1>Home VR</h1>
+  <p>Permita a câmera e o movimento para iniciar.</p>
+  <button id="startBtn">Iniciar</button>
+  <div id="err"></div>
+</div>
+
+<!-- Janela Biblioteca -->
+<div id="lib">
+  <div class="titlebar"><span class="t">Biblioteca</span>
+    <div class="wc"><b id="wExp" title="Ampliar">⤢</b><b id="wMin" title="Minimizar">—</b><b id="wClose" title="Fechar">✕</b></div>
+  </div>
+  <div class="body">
+    <div class="side">
+      <div class="nav" id="navSearch"><span class="ni">🔍</span><span id="searchLabel">Pesquisar</span><input id="searchInput" placeholder="Pesquisar" style="display:none"></div>
+      <div class="nav on" data-cat="apps"><span class="ni">▦</span>Aplicativos</div>
+      <div class="nav" data-cat="mundos"><span class="ni">◍</span>Mundos</div>
+    </div>
+    <div class="main">
+      <div class="head"><h2 id="mainTitle">Aplicativos</h2>
+        <div class="filters"><div class="dd" id="ddAll"><span id="ddAllT">Todos</span><i>▼</i></div><div class="dd" id="ddSort"><span id="ddSortT">Recentes</span><i>▼</i></div></div>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Dock -->
+<div id="dock">
+  <div class="toast" id="toast"></div>
+  <div class="bar">
+    <div class="av">🙂</div>
+    <div class="pill"><span id="ck">9:48</span><span>📶</span><span id="bat">🔋</span></div>
+    <div class="rb" data-open="Notificações">🔔</div>
+    <div class="rb" data-open="Modo VR">🥽</div>
+    <div class="sp"></div>
+    <div class="sc" style="background:linear-gradient(135deg,#4aa3ff,#2563eb)" data-open="Feed">📰</div>
+    <div class="sc" style="background:linear-gradient(135deg,#ffb347,#f2711c)" data-open="Loja">🛍️</div>
+    <div class="sc" style="background:linear-gradient(135deg,#b07cff,#6d4aff)" data-open="Pessoas">👥</div>
+    <div class="sc" style="background:linear-gradient(135deg,#ff7aa8,#e11d48)" data-open="Câmera">📷</div>
+    <div class="sc" style="background:linear-gradient(135deg,#a78bfa,#38bdf8)" data-open="Navegador">🧭</div>
+    <div class="sep"></div>
+    <div class="gb on" id="gridBtn" title="Biblioteca">⠿</div>
+  </div>
+  <div class="handle" id="handle"><i></i></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+
+/* ---------- Dados ---------- */
+const APPS = [
+  ['Câmera','📷','#f0627f,#d93a5c','apps'],
+  ['Ajuda e Dicas','❔','#f7c23b,#ee9a12','apps'],
+  ['TV','📺','#f7843b,#e4467a','apps'],
+  ['Feed','📰','#4aa3ff,#2563eb','apps'],
+  ['Navegador','🧭','#b59bff,#5b8cff','apps'],
+  ['Explorar','🌍','#3ddc97,#0ea5a4','apps'],
+  ['Loja','🛍️','#ffb347,#ef7d1a','apps'],
+  ['Jogos','🎮','#7c6cff,#3b2fd9','apps'],
+  ['Música','🎵','#ff6bb3,#9333ea','apps'],
+  ['Fotos','🖼️','#38bdf8,#6366f1','apps'],
+  ['Mensagens','💬','#34d399,#0891b2','apps'],
+  ['Vídeos 360','🎞️','#fb7185,#f97316','apps'],
+  ['Mãos','✋','#a3e635,#16a34a','apps'],
+  ['Passthrough','👁️','#67e8f9,#3b82f6','apps'],
+  ['Ajustes','⚙️','#94a3b8,#475569','apps'],
+  ['Pôr do sol','🌅','#fb923c,#db2777','mundos'],
+  ['Cidade','🌃','#6366f1,#0f172a','mundos'],
+  ['Praia','🏖️','#fde047,#06b6d4','mundos'],
+  ['Espaço','🌌','#4c1d95,#0f172a','mundos'],
+  ['Floresta','🌲','#4ade80,#14532d','mundos'],
+  ['Casa','🏠','#fbbf24,#b45309','mundos']
+];
+let cat = 'apps', query = '', sortMode = 0; // 0 recentes, 1 nome
+let scopeAll = true;
+
+const grid = document.getElementById('grid');
+function renderGrid(){
+  let list = APPS.filter(a => (scopeAll ? true : a[3]===cat) && (scopeAll ? a[3]===cat : true));
+  if(query) list = APPS.filter(a => a[0].toLowerCase().includes(query.toLowerCase()));
+  if(sortMode===1) list = [...list].sort((a,b)=>a[0].localeCompare(b[0],'pt-BR'));
+  grid.innerHTML = '';
+  if(!list.length){ grid.innerHTML='<div class="empty">Nada encontrado</div>'; return; }
+  list.forEach(([name,ic,grad])=>{
+    const [c1,c2]=grad.split(',');
+    const d=document.createElement('div'); d.className='app';
+    d.innerHTML=`<div class="tile" style="background:linear-gradient(135deg,${c1},${c2})">${ic}</div><div class="lb">${name}</div>`;
+    d.addEventListener('click',()=>toast('Abrindo '+name+'…'));
+    grid.appendChild(d);
+  });
+  document.getElementById('ddAllT').textContent = 'Todos (' + list.length + ')';
+}
+document.querySelectorAll('#lib .nav[data-cat]').forEach(n=>{
+  n.addEventListener('click',()=>{
+    document.querySelectorAll('#lib .nav').forEach(x=>x.classList.remove('on'));
+    n.classList.add('on'); cat=n.dataset.cat; query='';
+    document.getElementById('mainTitle').textContent = n.textContent.trim().replace(/^\S+\s*/,'')||n.textContent.trim();
+    document.getElementById('mainTitle').textContent = cat==='apps'?'Aplicativos':'Mundos';
+    resetSearchUI(); renderGrid(); grid.scrollTop=0;
+  });
+});
+const navSearch=document.getElementById('navSearch'), sInput=document.getElementById('searchInput'), sLabel=document.getElementById('searchLabel');
+function resetSearchUI(){ sInput.style.display='none'; sLabel.style.display=''; sInput.value=''; }
+navSearch.addEventListener('click',()=>{
+  document.querySelectorAll('#lib .nav').forEach(x=>x.classList.remove('on'));
+  navSearch.classList.add('on'); sLabel.style.display='none'; sInput.style.display='block'; sInput.focus();
+  document.getElementById('mainTitle').textContent='Pesquisar';
+});
+sInput.addEventListener('input',()=>{ query=sInput.value.trim(); renderGrid(); });
+document.getElementById('ddSort').addEventListener('click',()=>{
+  sortMode=1-sortMode; document.getElementById('ddSortT').textContent = sortMode?'Nome':'Recentes'; renderGrid();
+});
+document.getElementById('ddAll').addEventListener('click',()=>{
+  scopeAll=!scopeAll; renderGrid();
+});
+renderGrid();
+
+/* Toast no dock */
+const toastEl=document.getElementById('toast'); let toastT;
+function toast(t){ toastEl.textContent=t; toastEl.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),1600); }
+document.querySelectorAll('#dock [data-open]').forEach(b=>b.addEventListener('click',()=>toast('Abrindo '+b.dataset.open+'…')));
+
+/* Relógio e bateria */
+const ck=document.getElementById('ck'), bat=document.getElementById('bat');
+function tick(){ const d=new Date(); ck.textContent=d.getHours()+':'+String(d.getMinutes()).padStart(2,'0'); }
+tick(); setInterval(tick,1000);
+if(navigator.getBattery){ navigator.getBattery().then(b=>{ const up=()=>{bat.textContent='🔋 '+Math.round(b.level*100)+'%';}; up(); b.addEventListener('levelchange',up); }); }
+
+/* ---------- Cena 3D (CSS3D) ---------- */
+const FOV = 62;
+const cssRenderer = new CSS3DRenderer({element: document.getElementById('css')});
+const cssScene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth/innerHeight, 0.05, 50);
+function resize(){ cssRenderer.setSize(innerWidth, innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+
+const libEl=document.getElementById('lib'), dockEl=document.getElementById('dock');
+libEl.remove(); dockEl.remove();
+const libObj = new CSS3DObject(libEl);
+const dockObj = new CSS3DObject(dockEl);
+const S = 0.0014;
+let libScale = 1;
+libObj.scale.setScalar(S); dockObj.scale.setScalar(S);
+libObj.rotation.order = 'YXZ'; dockObj.rotation.order = 'YXZ';
+libObj.visible = dockObj.visible = false;
+cssScene.add(libObj, dockObj);
+
+const gridBtn=document.getElementById('gridBtn');
+function setLib(v){ libObj.visible=v; gridBtn.classList.toggle('on',v); }
+gridBtn.addEventListener('click',()=>setLib(!libObj.visible));
+document.getElementById('wClose').addEventListener('click',()=>setLib(false));
+document.getElementById('wMin').addEventListener('click',()=>setLib(false));
+document.getElementById('wExp').addEventListener('click',()=>{ libScale = libScale===1?1.3:1; libObj.scale.setScalar(S*libScale); });
+
+/* Posiciona a interface na frente de onde o usuário está olhando */
+const fwd = new THREE.Vector3(0,0,-1), tmp = new THREE.Vector3();
+function recenter(){
+  camera.getWorldDirection(tmp); tmp.y=0;
+  if(tmp.lengthSq()>0.01){ fwd.copy(tmp.normalize()); }
+  const yaw = Math.atan2(-fwd.x*1, -fwd.z*1);         // frente do objeto (+z) aponta para a origem
+  libObj.position.set(fwd.x*1.9, 0.12, fwd.z*1.9);
+  libObj.rotation.set(0, Math.atan2(-libObj.position.x, -libObj.position.z), 0);
+  dockObj.position.set(fwd.x*1.55, -0.60, fwd.z*1.55);
+  dockObj.rotation.set(-0.38, Math.atan2(-dockObj.position.x, -dockObj.position.z), 0);
+}
+document.getElementById('handle').addEventListener('click',()=>{ recenter(); toast('Recentralizado'); });
+
+/* ---------- Giroscópio com suavização ---------- */
+const targetQ = new THREE.Quaternion();
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5),0,0,Math.sqrt(0.5));
+const zee = new THREE.Vector3(0,0,1), euler = new THREE.Euler(), q0 = new THREE.Quaternion();
+let gotOrientation=false, started=false, placedOnce=false;
+function onOrientation(e){
+  if(e.alpha==null) return;
+  gotOrientation=true;
+  const d=THREE.MathUtils.degToRad;
+  const orient=d((screen.orientation&&screen.orientation.angle)||window.orientation||0);
+  euler.set(d(e.beta), d(e.alpha), -d(e.gamma), 'YXZ');
+  targetQ.setFromEuler(euler);
+  targetQ.multiply(q1);
+  targetQ.multiply(q0.setFromAxisAngle(zee,-orient));
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  if(!started) return;
+  if(gotOrientation && !placedOnce){
+    camera.quaternion.copy(targetQ);
+    recenter(); libObj.visible=true; dockObj.visible=true; placedOnce=true;
+    const tip=document.getElementById('tip'); tip.style.opacity=1; setTimeout(()=>tip.style.opacity=0,5000);
+  }
+  const ang=camera.quaternion.angleTo(targetQ);
+  const k=THREE.MathUtils.clamp(0.06+ang*1.8,0.06,0.6);   // anti-tremor: suave em micro-movimentos
+  camera.quaternion.slerp(targetQ,k);
+  cssRenderer.render(cssScene,camera);
+}
+loop();
+
+/* ---------- Início ---------- */
+document.getElementById('startBtn').addEventListener('click', async ()=>{
+  const err=document.getElementById('err'); err.textContent='';
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+      const r=await DeviceOrientationEvent.requestPermission();
+      if(r!=='granted') throw new Error('Permissão de movimento negada. Ative em Ajustes > Safari > Movimento e orientação.');
+    }
+    addEventListener('deviceorientation', onOrientation, true);
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+      const v=document.getElementById('video'); v.srcObject=stream; await v.play();
+    }catch(ce){ /* sem câmera: segue com fundo escuro */ }
+    document.getElementById('start').style.display='none';
+    started=true;
+  }catch(e){ err.textContent=e.message||String(e); }
+});
+</script>
+</body>
+</html>
