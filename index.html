@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Home VR - World Lock</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none}
+  #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+  #gl{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+  #css{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+
+  /* HUD */
+  #hint{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 96px);text-align:center;font-size:15px;font-weight:600;text-shadow:0 1px 6px #000;pointer-events:none;padding:0 24px}
+  #bar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);display:none;gap:10px;align-items:center;justify-content:space-between;background:rgba(20,22,30,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-radius:18px;padding:10px 14px;z-index:20}
+  #bar label{font-size:12px;opacity:.85;display:flex;flex-direction:column;gap:4px;flex:1}
+  #bar input[type=range]{width:100%}
+  .hbtn{background:#3b82f6;color:#fff;border:0;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600}
+  .hbtn.sec{background:rgba(255,255,255,.16)}
+  #start{position:fixed;inset:0;z-index:30;background:radial-gradient(circle at 50% 30%,#1b2440,#07090f);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:32px}
+  #start h1{margin:0;font-size:30px}
+  #start p{margin:0;max-width:320px;opacity:.75;line-height:1.45;font-size:15px}
+  #start .hbtn{font-size:18px;padding:16px 38px;border-radius:16px}
+  #err{color:#ff8a8a;font-size:14px;min-height:18px}
+
+  /* Painel (interface 3D) */
+  #panel{width:640px;height:420px;border-radius:34px;background:linear-gradient(160deg,rgba(28,32,48,.94),rgba(14,16,26,.94));border:2px solid rgba(255,255,255,.14);box-shadow:0 0 60px rgba(80,140,255,.35);padding:22px 26px;display:flex;flex-direction:column;gap:16px;pointer-events:auto;color:#fff;font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+  #panel .top{display:flex;justify-content:space-between;align-items:center}
+  #panel .title{font-size:30px;font-weight:700;letter-spacing:.3px}
+  #panel .clock{font-size:22px;opacity:.8}
+  #panel .tabs{display:flex;gap:8px}
+  #panel .tab{flex:1;text-align:center;padding:12px 0;border-radius:16px;background:rgba(255,255,255,.08);font-size:19px;cursor:pointer}
+  #panel .tab.on{background:#3b82f6}
+  #panel .grid{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  #panel .tile{border-radius:22px;background:rgba(255,255,255,.09);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font-size:21px;cursor:pointer;transition:background .15s,transform .1s}
+  #panel .tile:active{transform:scale(.96)}
+  #panel .tile.on{background:rgba(59,130,246,.55)}
+  #panel .tile .ic{font-size:44px;line-height:1}
+  #panel .foot{font-size:17px;opacity:.75;text-align:center;min-height:22px}
+</style>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+
+<video id="video" playsinline muted autoplay></video>
+<canvas id="gl"></canvas>
+<div id="css"></div>
+
+<div id="hint"></div>
+<div id="bar">
+  <label>Altura do celular em relação ao chão: <span id="hv">1.4 m</span>
+    <input id="height" type="range" min="0.6" max="2.0" step="0.05" value="1.4">
+  </label>
+  <button class="hbtn sec" id="reset">Reposicionar</button>
+</div>
+
+<div id="start">
+  <h1>Home VR</h1>
+  <p>Aponte para uma mesa, o chão ou uma parede e toque na tela para fixar o painel no ambiente.</p>
+  <button class="hbtn" id="startBtn">Iniciar</button>
+  <div id="err"></div>
+</div>
+
+<!-- ============ INTERFACE (será projetada no espaço 3D) ============ -->
+<!-- COLE SUA INTERFACE AQUI: substitua o conteúdo de #panel mantendo o elemento. -->
+<div id="panel">
+  <div class="top"><div class="title">Home VR</div><div class="clock" id="clock">--:--</div></div>
+  <div class="tabs" id="tabs">
+    <div class="tab on">Início</div><div class="tab">Bolhas</div><div class="tab">Ambientes</div>
+    <div class="tab">Passthrough</div><div class="tab">Mãos</div><div class="tab">Ajustes</div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="foot" id="foot">Painel fixo no ambiente</div>
+</div>
+<!-- =================================================================== -->
+
+<script type="module">
+import * as THREE from 'three';
+import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+
+/* ---------- Conteúdo do painel (interativo) ---------- */
+const TABS = {
+  'Início':      [['🎮','Jogos'],['🌐','Navegador'],['👥','Amigos'],['🎵','Música'],['📷','Câmera'],['⚙️','Ajustes']],
+  'Bolhas':      [['🫧','Bolha 1'],['🫧','Bolha 2'],['🫧','Bolha 3'],['🎨','Cores'],['✨','Brilho'],['🔊','Som']],
+  'Ambientes':   [['🌅','Pôr do sol'],['🌃','Cidade'],['🌲','Floresta'],['🌌','Espaço'],['🏖️','Praia'],['🏠','Casa']],
+  'Passthrough': [['👁️','Ver ambiente'],['🔆','Brilho'],['🎚️','Opacidade'],['🌓','Contraste'],['🎞️','Filtro'],['📐','Bordas']],
+  'Mãos':        [['✋','Rastrear'],['🤏','Pinça'],['👉','Apontar'],['🖐️','Calibrar'],['🧤','Visual'],['📊','Debug']],
+  'Ajustes':     [['🔧','Geral'],['🎯','Qualidade'],['🖥️','Tela cheia'],['🔋','Bateria'],['📶','Rede'],['ℹ️','Sobre']]
+};
+const grid = document.getElementById('grid'), foot = document.getElementById('foot');
+function renderTab(name){
+  grid.innerHTML='';
+  TABS[name].forEach(([ic,label])=>{
+    const t=document.createElement('div'); t.className='tile';
+    t.innerHTML=`<div class="ic">${ic}</div><div>${label}</div>`;
+    t.addEventListener('click',()=>{ t.classList.toggle('on'); foot.textContent = label + (t.classList.contains('on')?' ativado':' desativado'); });
+    grid.appendChild(t);
+  });
+}
+document.querySelectorAll('#tabs .tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('#tabs .tab').forEach(x=>x.classList.remove('on'));
+    tab.classList.add('on'); renderTab(tab.textContent.trim()); foot.textContent=tab.textContent.trim();
+  });
+});
+renderTab('Início');
+const clock=document.getElementById('clock');
+setInterval(()=>{const d=new Date();clock.textContent=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});},1000);
+
+/* ---------- Cena ---------- */
+const FOV = 62;
+const glCanvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({canvas:glCanvas, alpha:true, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0,0);
+
+const cssRenderer = new CSS3DRenderer({element: document.getElementById('css')});
+const scene = new THREE.Scene();
+const cssScene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth/innerHeight, 0.05, 50);
+camera.rotation.order = 'YXZ';
+
+function resize(){
+  renderer.setSize(innerWidth, innerHeight, false);
+  cssRenderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+/* Retículo */
+const reticle = new THREE.Group();
+const ring = new THREE.Mesh(new THREE.RingGeometry(0.12,0.14,48), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.95,side:THREE.DoubleSide,depthTest:false}));
+const dot  = new THREE.Mesh(new THREE.CircleGeometry(0.018,24), new THREE.MeshBasicMaterial({color:0x3b82f6,side:THREE.DoubleSide,depthTest:false}));
+const ring2= new THREE.Mesh(new THREE.RingGeometry(0.19,0.195,48), new THREE.MeshBasicMaterial({color:0x3b82f6,transparent:true,opacity:.6,side:THREE.DoubleSide,depthTest:false}));
+reticle.add(ring, dot, ring2);
+scene.add(reticle);
+
+/* Painel 3D (CSS3D) */
+const panelEl = document.getElementById('panel');
+panelEl.remove();
+const panelObj = new CSS3DObject(panelEl);
+const PANEL_SCALE = 0.002;             // 640px -> 1.28 m
+panelObj.scale.setScalar(PANEL_SCALE);
+panelObj.visible = false;
+cssScene.add(panelObj);
+
+/* ---------- Estado ---------- */
+let floorH = 1.4;
+let placed = false;
+let started = false;
+const hint = document.getElementById('hint');
+const bar = document.getElementById('bar');
+const heightInput = document.getElementById('height');
+const hv = document.getElementById('hv');
+heightInput.addEventListener('input',()=>{ floorH=parseFloat(heightInput.value); hv.textContent=floorH.toFixed(2).replace(/0$/,'')+' m'; });
+document.getElementById('reset').addEventListener('click',e=>{
+  e.stopPropagation(); placed=false; panelObj.visible=false; reticle.visible=true; setHint('Aponte para uma superfície e toque para fixar');
+});
+function setHint(t){ hint.textContent=t; }
+
+/* ---------- Orientação (giroscópio) + suavização ---------- */
+const targetQ = new THREE.Quaternion();
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5),0,0,Math.sqrt(0.5));
+const zee = new THREE.Vector3(0,0,1);
+const euler = new THREE.Euler();
+const q0 = new THREE.Quaternion();
+let gotOrientation = false;
+
+function onOrientation(e){
+  if(e.alpha==null) return;
+  gotOrientation = true;
+  const d = THREE.MathUtils.degToRad;
+  const orient = d((screen.orientation && screen.orientation.angle) || window.orientation || 0);
+  euler.set(d(e.beta), d(e.alpha), -d(e.gamma), 'YXZ');
+  targetQ.setFromEuler(euler);
+  targetQ.multiply(q1);
+  targetQ.multiply(q0.setFromAxisAngle(zee, -orient));
+}
+
+/* ---------- Mira na superfície (chão virtual / parede virtual) ---------- */
+const dir = new THREE.Vector3();
+const hitPoint = new THREE.Vector3();
+const smoothPoint = new THREE.Vector3();
+let hitIsFloor = true;
+let firstHit = true;
+
+function updateReticleTarget(){
+  camera.getWorldDirection(dir);
+  if(dir.y < -0.15){
+    const t = -floorH / dir.y;
+    if(t <= 8){
+      hitPoint.copy(dir).multiplyScalar(t);
+      hitIsFloor = true; return;
+    }
+  }
+  // parede virtual a ~2 m de distância horizontal
+  const h = Math.max(Math.hypot(dir.x, dir.z), 0.2);
+  hitPoint.copy(dir).multiplyScalar(2 / h);
+  hitIsFloor = false;
+}
+
+/* ---------- Fixar painel ---------- */
+function place(){
+  if(placed || !started || !gotOrientation) return;
+  placed = true;
+  reticle.visible = false;
+  panelObj.position.copy(smoothPoint);
+  if(hitIsFloor) panelObj.position.y += (420*PANEL_SCALE)/2 + 0.02;   // painel em pé sobre a superfície
+  const camPos = camera.position;
+  panelObj.rotation.set(0, Math.atan2(camPos.x - panelObj.position.x, camPos.z - panelObj.position.z), 0);
+  panelObj.visible = true;
+  setHint('');
+}
+addEventListener('pointerdown', e=>{
+  if(e.target.closest('#bar') || e.target.closest('#start') || e.target.closest('#panel')) return;
+  place();
+});
+
+/* ---------- Loop ---------- */
+const clk = new THREE.Clock();
+function loop(){
+  requestAnimationFrame(loop);
+  if(!started) return;
+  clk.getDelta();
+
+  // Lerp/Slerp adaptativo: mais suave em movimentos pequenos (tremor), mais rápido em giros grandes
+  const ang = camera.quaternion.angleTo(targetQ);
+  const k = THREE.MathUtils.clamp(0.06 + ang*1.8, 0.06, 0.6);
+  camera.quaternion.slerp(targetQ, k);
+
+  if(!placed){
+    updateReticleTarget();
+    if(firstHit){ smoothPoint.copy(hitPoint); firstHit=false; }
+    smoothPoint.lerp(hitPoint, 0.18);
+    reticle.position.copy(smoothPoint);
+    if(hitIsFloor){ reticle.rotation.set(-Math.PI/2,0,0); }
+    else { reticle.lookAt(0,0,0); }
+    const s = 1 + Math.sin(performance.now()/350)*0.05;
+    ring2.scale.setScalar(s);
+  }
+
+  renderer.render(scene, camera);
+  cssRenderer.render(cssScene, camera);
+}
+loop();
+
+/* ---------- Início: permissões + câmera traseira ---------- */
+document.getElementById('startBtn').addEventListener('click', async ()=>{
+  const err = document.getElementById('err'); err.textContent='';
+  try{
+    // 1) permissão de movimento (obrigatória no iOS, precisa vir de um toque)
+    if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const r = await DeviceOrientationEvent.requestPermission();
+      if(r !== 'granted') throw new Error('Permissão de movimento negada. Ative em Ajustes > Safari > Movimento e orientação.');
+    }
+    window.addEventListener('deviceorientation', onOrientation, true);
+
+    // 2) câmera traseira
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}},
+      audio:false
+    });
+    const v = document.getElementById('video');
+    v.srcObject = stream; await v.play();
+
+    document.getElementById('start').style.display='none';
+    bar.style.display='flex';
+    started = true;
+    setHint('Aponte para uma superfície e toque para fixar');
+
+    // aguarda o primeiro dado do giroscópio
+    setTimeout(()=>{ if(!gotOrientation) setHint('Sem dados do giroscópio. Verifique as permissões de movimento.'); }, 2500);
+  }catch(e){
+    err.textContent = e.message || String(e);
+  }
+});
+</script>
+</body>
+</html>
