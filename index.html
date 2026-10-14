@@ -1,1 +1,164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Home VR 6DOF</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:none}
+  #gl{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
+  #cam{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
+  #start{position:fixed;left:0;top:0;right:0;bottom:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    text-align:center;padding:24px;background:radial-gradient(circle at 50% 25%,#1e293b,#090d16)}
+  #start h1{margin:0;font-size:32px;font-weight:700}
+  #start p{margin:0;max-width:360px;opacity:.75;line-height:1.45;font-size:15px}
+  #start button{border:0;border-radius:999px;padding:15px 38px;font-size:17px;font-weight:700;background:#fff;color:#111;min-width:240px;cursor:pointer}
+  #start button.sec{background:rgba(255,255,255,.16);color:#fff;font-weight:600}
+  #err{color:#f87171;font-size:13px;min-height:16px;max-width:340px}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<video id="cam" playsinline muted autoplay></video>
 
+<div id="start">
+  <h1>Home VR 6DOF</h1>
+  <p>Escolha o modo de inicialização para o seu ambiente virtual imersivo.</p>
+  <button id="bXR" type="button" style="display:none">Iniciar em WebXR (6DOF Real)</button>
+  <button id="bVR" type="button" class="sec">Iniciar em Modo VR Box (Giroscópio)</button>
+  <button id="bFull" type="button" class="sec">Tela Cheia</button>
+  <div id="err"></div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $=function(i){return document.getElementById(i);};
+
+function goFull(){
+  try{
+    var el=document.documentElement;
+    var f=el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen||el.msRequestFullscreen;
+    if(f){ var p=f.call(el); if(p&&p.catch) p.catch(function(){}); }
+    if(screen.orientation&&screen.orientation.lock){ screen.orientation.lock('landscape').catch(function(){}); }
+  }catch(e){}
+}
+$('bFull').addEventListener('click',goFull);
+
+if(typeof THREE==='undefined'){
+  $('err').textContent='Não foi possível carregar o Three.js. Verifique a internet e recarregue.';
+  return;
+}
+
+var canvas=$('gl');
+var renderer=new THREE.WebGLRenderer({canvas:canvas,antialias:true,alpha:false,powerPreference:'high-performance'});
+renderer.setClearColor(0x05070c,1);
+renderer.xr.enabled=true; 
+renderer.xr.setReferenceSpaceType('local-floor');
+
+var scene=new THREE.Scene();
+var rig=new THREE.Object3D(); 
+scene.add(rig);
+
+var camera=new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,0.05,100);
+rig.add(camera);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x334455,0.95));
+var dirLight=new THREE.DirectionalLight(0xffffff,0.8); 
+dirLight.position.set(1,2,1); 
+scene.add(dirLight);
+
+// Chão quadriculado de referência espacial
+var grid=new THREE.GridHelper(40,40,0x3b82f6,0x1e293b);
+grid.position.set(0,-1.5,0);
+scene.add(grid);
+
+// Painel principal simulado (Estilo Quest Home)
+var geom=new THREE.PlaneGeometry(1.6,0.9);
+var uc=document.createElement('canvas'); uc.width=1024; uc.height=576;
+var ug=uc.getContext('2d');
+ug.fillStyle='rgba(20,24,33,0.92)';
+ug.fillRect(0,0,1024,576);
+ug.fillStyle='#ffffff'; ug.font='bold 40px sans-serif';
+ug.fillText('Home VR - Menu Principal', 60, 80);
+
+var apps=['Navegador', 'Biblioteca', 'Configurações', 'Jogos', 'Midia', 'Sistema'];
+apps.forEach(function(name, i){
+  var x = 60 + (i % 3) * 310, y = 160 + Math.floor(i / 3) * 180;
+  ug.fillStyle='rgba(255,255,255,0.08)';
+  ug.fillRect(x, y, 280, 140);
+  ug.fillStyle='#60a5fa'; ug.font='bold 26px sans-serif';
+  ug.fillText(name, x + 24, y + 50);
+});
+
+var panelTex=new THREE.CanvasTexture(uc);
+var panelMat=new THREE.MeshBasicMaterial({map:panelTex, transparent:true});
+var panel=new THREE.Mesh(geom, panelMat);
+panel.position.set(0, 1.2, -2.5);
+scene.add(panel);
+
+// Suporte a Giroscópio para modo 3DOF convencional
+var targetQ=new THREE.Quaternion(), q1=new THREE.Quaternion(-Math.sqrt(.5),0,0,Math.sqrt(.5)), zee=new THREE.Vector3(0,0,1), eu=new THREE.Euler(), q0=new THREE.Quaternion();
+var yaw=0, pitch=0, gotOri=false;
+
+window.addEventListener('deviceorientation', function(e){
+  try{
+    if(e.alpha==null||e.beta==null||e.gamma==null) return;
+    gotOri=true;
+    var d=THREE.MathUtils.degToRad;
+    var orient=d((screen.orientation&&typeof screen.orientation.angle==='number')?screen.orientation.angle:(window.orientation||0));
+    eu.set(d(e.beta),d(e.alpha),-d(e.gamma),'YXZ');
+    targetQ.setFromEuler(eu); targetQ.multiply(q1); targetQ.multiply(q0.setFromAxisAngle(zee,-orient));
+  }catch(err){}
+}, true);
+
+// Verificação de suporte WebXR (6DOF)
+if(navigator.xr){
+  navigator.xr.isSessionSupported('immersive-vr').then(function(supported){
+    if(supported){
+      $('bXR').style.display='block';
+    }
+  }).catch(function(){});
+}
+
+$('bXR').addEventListener('click', async function(){
+  try{
+    var session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','hand-tracking']});
+    await renderer.xr.setSession(session);
+    $('start').style.display='none';
+  }catch(e){
+    $('err').textContent='Erro ao iniciar WebXR: '+(e.message||e);
+  }
+});
+
+$('bVR').addEventListener('click', async function(){
+  goFull();
+  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+    try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
+  }
+  $('start').style.display='none';
+  renderer.setAnimationLoop(animLoop);
+});
+
+function animLoop(){
+  if(!renderer.xr.isPresenting){
+    rig.quaternion.slerp(targetQ, 0.1);
+  }
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+})();
+</script>
+</body>
+</html>
